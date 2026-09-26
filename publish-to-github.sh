@@ -55,6 +55,30 @@ echo "   prebuilt daemon is tracked"
 COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo 0)
 echo "   $COMMITS commit(s) on $(git branch --show-current)"
 
+# Commits keep whatever author they were made with, and GitHub links a commit
+# to your account by matching the email. A placeholder address means the
+# commits show up under a grey name nobody can click.
+AUTHOR_EMAIL=$(git log -1 --format='%ae')
+AUTHOR_NAME=$(git log -1 --format='%an')
+case "$AUTHOR_EMAIL" in
+    *localhost|*local|*@nanami*|"")
+        echo
+        echo "   WARNING: commits are authored as \"$AUTHOR_NAME <$AUTHOR_EMAIL>\"."
+        echo "   GitHub matches commits to accounts by email, so these won't be"
+        echo "   linked to you. To fix before pushing:"
+        echo
+        echo "     git filter-branch --env-filter '"
+        echo "       export GIT_AUTHOR_NAME=\"Your Name\""
+        echo "       export GIT_AUTHOR_EMAIL=\"you@example.com\""
+        echo "       export GIT_COMMITTER_NAME=\"Your Name\""
+        echo "       export GIT_COMMITTER_EMAIL=\"you@example.com\"' -- --all"
+        echo
+        printf '   Continue anyway? [y/N] '
+        read -r ans || true
+        case "$ans" in y|Y) ;; *) echo "   aborted."; exit 1 ;; esac
+        ;;
+esac
+
 # ------------------------------------------------------------------ push ---
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     echo
