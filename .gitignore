@@ -1,0 +1,30 @@
+# ---------------------------------------------------------------- macOS ---
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+__MACOSX/
+
+# --------------------------------------------------------- build outputs ---
+# Nanami.app comes out of `make`; only its sources are tracked.
+mac-app/Nanami.app/
+*.pkg
+*.dmg
+
+# Go build cache and installed artefacts (GOPATH mode, see build-core.sh).
+# bin/awgd.darwin-amd64 is NOT ignored: it's the prebuilt daemon, shipped so
+# a fresh clone can run `make` without a Go 1.10 toolchain.
+go-core/pkg/
+go-core/bin/
+*.test
+*.out
+
+# --------------------------------------------------------------- editors ---
+.idea/
+.vscode/
+*.swp
+*~
+
+# ----------------------------------------------------------------- local ---
+# Leftovers from local runs.
+*.log
