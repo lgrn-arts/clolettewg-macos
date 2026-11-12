@@ -92,9 +92,9 @@ You can override `SDKROOT` and `CLANG` if needed. The GUI is built with deployme
 - The engine is based on `wireguard-go` and distributed under GPLv2. See `Engine/LICENSE` and `Engine/COPYING`.
 - The official AmneziaWG project for Apple platforms: `amnezia-vpn/amneziawg-apple`.
 
-## Русская версия
+## А теперь на русском
 
-Минималистичный клиент AmneziaWG для старых макосей (потому что других не было), написанный на Objective-C и Go. Программа живёт в трее и делает ровно то, что нужно: подключает туннель, показывает статус и не требует пароль при каждом запуске. Всё.
+Это минималистичный клиент AmneziaWG для старых макосей (потому что других не было), написанный на Objective-C и Go. Программа живёт в трее и делает ровно то, что нужно: подключает туннель, показывает статус и не требует пароль при каждом запуске. Всё.
 
 Работоспособность проверена на OS X Mavericks и Catalina. На других системах не проверена, нужны тесты и фидбэк, оттого и бэта. Ниже Mavericks не поддерживается.
 
