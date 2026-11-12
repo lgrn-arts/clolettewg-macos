@@ -2,7 +2,7 @@
 
 <img src="Assets/AppIcon.png" alt="CloletteWG icon" width="96">
 
-[English](#english) · [Русский](#русская-версия)
+[English](#english) · [Русский](#а-теперь-на-русском)
 
 ## English
 
