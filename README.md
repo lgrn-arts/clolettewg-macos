@@ -27,7 +27,7 @@
 - Python 3 — только для DMG-установщика.
 - Intel Mac или Apple Silicon с Rosetta 2.
 
-Билд:
+## Билд:
 
 ```sh
 ./build.sh
