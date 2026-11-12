@@ -1,0 +1,27 @@
+{
+  "title": "CloletteWG",
+  "background": "__ROOT__/build/dmg-background.tiff",
+  "icon": "__ROOT__/build/VolumeIcon.icns",
+  "icon-size": 96,
+  "format": "UDZO",
+  "filesystem": "HFS+",
+  "window": {
+    "position": { "x": 100, "y": 100 },
+    "size": { "width": 600, "height": 350 }
+  },
+  "contents": [
+    {
+      "type": "file",
+      "path": "__ROOT__/build/dmg-stage/CloletteWG.app",
+      "x": 150,
+      "y": 175
+    },
+    {
+      "type": "link",
+      "path": "/Applications",
+      "name": "Applications",
+      "x": 450,
+      "y": 175
+    }
+  ]
+}
