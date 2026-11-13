@@ -64,7 +64,6 @@ When updating, the app compares the installed daemon with the one bundled in `.a
 
 ### Quirks
 
-- Closing the GUI does **not** bring the tunnel down! Disconnect first if that's what you want.
 - **Uninstall Service…** removes the daemon and launchd service but keeps your configs.
 
 ### Limitations
@@ -152,7 +151,6 @@ SKIP_CORE_BUILD=1 ./build.sh
 
 ### Нюансы
 
-- Закрытие GUI не дропает туннель! Если хочешь отключиться, сделай это перед выходом.
 - **Uninstall Service…** сносит демон и launchd-сервис, но оставляет конфиги.
 
 ### Ограничения
