@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.narek.clolettewg.daemon</string>
+  <key>Label</key><string>com.clolettewg.daemon</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Library/PrivilegedHelperTools/com.narek.clolettewg.daemon</string>
+    <string>/Library/PrivilegedHelperTools/com.clolettewg.daemon</string>
     <string>-service</string>
   </array>
   <key>RunAtLoad</key><true/>

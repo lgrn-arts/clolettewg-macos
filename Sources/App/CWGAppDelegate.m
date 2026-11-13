@@ -4,14 +4,30 @@
 #import "CWGServiceInstaller.h"
 #import "CWGTunnelStore.h"
 #import "CWGVPNURLParser.h"
+#import "CWGStatusItemView.h"
+#import <float.h>
 
 @interface CWGAppDelegate ()
 @property (nonatomic, retain) NSStatusItem *statusItem;
+@property (nonatomic, retain) CWGStatusItemView *statusView;
+@property (nonatomic, retain) NSMenu *statusMenu;
+@property (nonatomic, retain) CWGTunnelStatus *currentStatus;
+@property (nonatomic, copy) NSString *lastConnectedTunnelName;
+@property (nonatomic, retain) NSMenuItem *autoLaunchItem;
+@property (nonatomic, retain) NSMenuItem *autoTunnelItem;
 @property (nonatomic, retain) NSTimer *refreshTimer;
 @property (nonatomic, retain) CWGTunnelStore *store;
 @property (nonatomic, retain) NSWindow *aboutWindow;
 @property (nonatomic, retain) NSWindow *statusWindow;
 @property (nonatomic, retain) NSWindow *logWindow;
+@property (nonatomic, retain) NSTextField *statusStateLabel;
+@property (nonatomic, retain) NSImageView *statusDotView;
+@property (nonatomic, retain) NSMutableDictionary *statusValueLabels;
+@property (nonatomic, copy) NSString *networkInfoKey;
+@property (nonatomic, copy) NSString *countryValue;
+@property (nonatomic, copy) NSString *ispValue;
+@property (nonatomic, retain) NSTextView *killSwitchEditor;
+@property (nonatomic, copy) NSString *killSwitchTunnelName;
 @property (nonatomic, assign) BOOL refreshInFlight;
 @property (nonatomic, assign) BOOL operationInFlight;
 @end
@@ -28,11 +44,57 @@
 
     self.store = [[CWGTunnelStore alloc] init];
     [self installEditMenu];
-    self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
-    [self.statusItem setHighlightMode:YES];
+    [self installStatusItem];
     [self refreshStatus];
-    self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:3.0 target:self selector:@selector(refreshStatus) userInfo:nil repeats:YES];
+    self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(refreshStatus) userInfo:nil repeats:YES];
     [self performSelector:@selector(offerSetupIfNeeded) withObject:nil afterDelay:0.1];
+    [self performSelector:@selector(autoConnectIfNeeded) withObject:nil afterDelay:1.0];
+    [self performSelector:@selector(applyBossModeAtLoginIfNeeded) withObject:nil afterDelay:0.2];
+    [[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self
+                                                          selector:@selector(systemWillPowerOff:)
+                                                              name:NSWorkspaceWillPowerOffNotification
+                                                            object:nil];
+}
+
+- (void)installStatusItem {
+    self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:26.0];
+    CWGStatusItemView *view = [[CWGStatusItemView alloc] initWithFrame:NSMakeRect(0, 0, 26.0, 22.0)];
+    self.statusView = view;
+    __weak CWGAppDelegate *weakSelf = self;
+    view.leftAction = ^{
+        [weakSelf toggleLastTunnel];
+    };
+    view.rightAction = ^{
+        [weakSelf showStatusMenu];
+    };
+    [self.statusItem setView:view];
+    if (self.currentStatus) [self applyStatus:self.currentStatus];
+}
+
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
+    (void)sender;
+    (void)flag;
+    if (!self.statusItem) [self installStatusItem];
+    [self refreshStatus];
+    return YES;
+}
+
+- (void)showStatusMenu {
+    if (self.statusMenu) [self.statusItem popUpStatusItemMenu:self.statusMenu];
+}
+
+- (void)bossMode:(id)sender {
+    (void)sender;
+    [[NSStatusBar systemStatusBar] removeStatusItem:self.statusItem];
+    self.statusItem = nil;
+    self.statusView = nil;
+}
+
+- (void)systemWillPowerOff:(NSNotification *)notification {
+    (void)notification;
+    if ([self.currentStatus isActive]) {
+        [[self daemonClient] bringDownWithError:NULL];
+    }
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender {
@@ -66,22 +128,38 @@
 }
 
 - (void)applyStatus:(CWGTunnelStatus *)status {
+    self.currentStatus = status;
+    if ([status isActive] && status.name.length > 0 && ![self.lastConnectedTunnelName isEqualToString:status.name]) {
+        self.lastConnectedTunnelName = status.name;
+        [[NSUserDefaults standardUserDefaults] setObject:status.name forKey:@"CloletteWG.LastConnectedTunnel"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
     NSString *imageName = [status isActive] ? @"menubar-icon-a" : @"menubar-icon-na";
     NSImage *image = [[NSBundle mainBundle] pathForResource:imageName ofType:@"png"] ?
                      [NSImage imageNamed:imageName] : nil;
     [image setSize:NSMakeSize(18.0, 18.0)];
     [image setTemplate:NO];
-    [self.statusItem setImage:image];
-    [self.statusItem setTitle:@""];
+    self.statusView.image = image;
+    self.statusView.connecting = [status.state isEqualToString:@"connecting"];
+    [self.statusView setNeedsDisplay:YES];
     NSString *tooltip = [status isActive] && [status.name length] > 0
                         ? [NSString stringWithFormat:@"CloletteWG: %@ — %@", status.name, [status readableState]]
                         : [NSString stringWithFormat:@"CloletteWG: %@", [status readableState]];
-    [self.statusItem setToolTip:tooltip];
+    [self.statusView setToolTip:tooltip];
     [self rebuildMenuWithStatus:status];
+    [self updateStatusWindowWithStatus:status];
+    [self updateNetworkInfoForStatus:status];
 }
 
 - (void)rebuildMenuWithStatus:(CWGTunnelStatus *)status {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"CloletteWG"];
+    [menu setAutoenablesItems:NO];
+    NSArray *names = [self.store tunnelNames];
+    NSMenuItem *autoConnectItem = [[NSMenuItem alloc] initWithTitle:[status isActive] ? @"Disconnect" : @"Auto-Connect" action:@selector(autoconnect:) keyEquivalent:@""];
+    [autoConnectItem setTarget:self];
+    [autoConnectItem setEnabled:names.count > 0];
+    [menu addItem:autoConnectItem];
+    [menu addItem:[NSMenuItem separatorItem]];
     NSString *summary = [status.name length] > 0
                         ? [NSString stringWithFormat:@"%@ — %@", status.name, [status readableState]]
                         : [status readableState];
@@ -90,7 +168,6 @@
     [menu addItem:summaryItem];
     [menu addItem:[NSMenuItem separatorItem]];
 
-    NSArray *names = [self.store tunnelNames];
     if ([names count] == 0) {
         NSMenuItem *empty = [[NSMenuItem alloc] initWithTitle:@"(no tunnels — import below)" action:NULL keyEquivalent:@""];
         [empty setEnabled:NO];
@@ -110,12 +187,46 @@
     [self addActionToMenu:menu title:@"Paste vpn:// URL…" key:@"v" selector:@selector(pasteVPNURL:)];
     [self addActionToMenu:menu title:@"Show full status" key:@"s" selector:@selector(showStatus:)];
     [menu addItem:[NSMenuItem separatorItem]];
-    [self addActionToMenu:menu title:@"Install or Repair Service…" key:@"" selector:@selector(offerSetupIfNeeded)];
-    [self addActionToMenu:menu title:@"Uninstall Service…" key:@"" selector:@selector(uninstallService:)];
+    NSMenuItem *settingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings" action:NULL keyEquivalent:@""];
+    NSMenu *settingsMenu = [[NSMenu alloc] initWithTitle:@"Settings"];
+    [settingsMenu setAutoenablesItems:NO];
+    NSMenuItem *serviceItem = [[NSMenuItem alloc] initWithTitle:@"Service" action:NULL keyEquivalent:@""];
+    NSMenu *serviceMenu = [[NSMenu alloc] initWithTitle:@"Service"];
+    [serviceMenu setAutoenablesItems:NO];
+    [self addActionToMenu:serviceMenu title:@"Install or Repair" key:@"" selector:@selector(offerSetupIfNeeded)];
+    [self addActionToMenu:serviceMenu title:@"Uninstall" key:@"" selector:@selector(uninstallService:)];
+    [serviceItem setSubmenu:serviceMenu];
+    [settingsMenu addItem:serviceItem];
+
+    NSMenuItem *startupItem = [[NSMenuItem alloc] initWithTitle:@"Startup" action:NULL keyEquivalent:@""];
+    NSMenu *startupMenu = [[NSMenu alloc] initWithTitle:@"Startup"];
+    [startupMenu setAutoenablesItems:NO];
+    BOOL autoLaunch = [[NSUserDefaults standardUserDefaults] boolForKey:@"CloletteWG.AutoLaunchApp"];
+    BOOL autoTunnel = autoLaunch && [[NSUserDefaults standardUserDefaults] boolForKey:@"CloletteWG.AutoConnectTunnel"];
+    BOOL bossAtLogin = autoLaunch && [[NSUserDefaults standardUserDefaults] boolForKey:@"CloletteWG.BossModeAtLogin"];
+    self.autoLaunchItem = [[NSMenuItem alloc] initWithTitle:@"Launch Application" action:@selector(toggleAutoLaunch:) keyEquivalent:@""];
+    [self.autoLaunchItem setTarget:self];
+    [self.autoLaunchItem setState:autoLaunch ? NSOnState : NSOffState];
+    [startupMenu addItem:self.autoLaunchItem];
+    self.autoTunnelItem = [[NSMenuItem alloc] initWithTitle:@"Connect Tunnel" action:@selector(toggleAutoTunnel:) keyEquivalent:@""];
+    [self.autoTunnelItem setTarget:self];
+    [self.autoTunnelItem setState:autoTunnel ? NSOnState : NSOffState];
+    [self.autoTunnelItem setEnabled:autoLaunch];
+    [startupMenu addItem:self.autoTunnelItem];
+    NSMenuItem *bossAtLoginItem = [[NSMenuItem alloc] initWithTitle:@"Boss-mode" action:@selector(toggleBossModeAtLogin:) keyEquivalent:@""];
+    [bossAtLoginItem setTarget:self];
+    [bossAtLoginItem setState:bossAtLogin ? NSOnState : NSOffState];
+    [bossAtLoginItem setEnabled:autoLaunch];
+    [startupMenu addItem:bossAtLoginItem];
+    [startupItem setSubmenu:startupMenu];
+    [settingsMenu addItem:startupItem];
+    [settingsItem setSubmenu:settingsMenu];
+    [menu addItem:settingsItem];
     [menu addItem:[NSMenuItem separatorItem]];
     [self addActionToMenu:menu title:@"About CloletteWG" key:@"" selector:@selector(showAbout:)];
+    [self addActionToMenu:menu title:@"Boss-mode" key:@"b" selector:@selector(bossMode:)];
     [self addActionToMenu:menu title:@"Quit" key:@"q" selector:@selector(quitApplication:)];
-    [self.statusItem setMenu:menu];
+    self.statusMenu = menu;
 }
 
 - (void)addActionToMenu:(NSMenu *)menu title:(NSString *)title key:(NSString *)key selector:(SEL)selector {
@@ -130,11 +241,159 @@
     [edit setTarget:self];
     [edit setRepresentedObject:name];
     [menu addItem:edit];
+    NSMenuItem *rename = [[NSMenuItem alloc] initWithTitle:@"Rename" action:@selector(renameTunnel:) keyEquivalent:@""];
+    [rename setTarget:self];
+    [rename setRepresentedObject:name];
+    [menu addItem:rename];
     NSMenuItem *delete = [[NSMenuItem alloc] initWithTitle:@"Delete" action:@selector(deleteTunnel:) keyEquivalent:@""];
     [delete setTarget:self];
     [delete setRepresentedObject:name];
     [menu addItem:delete];
     return menu;
+}
+
+- (NSString *)endpointHostForConfiguration:(NSString *)configuration {
+    BOOL peerSection = NO;
+    for (NSString *line in [configuration componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if ([trimmed hasPrefix:@"["]) {
+            peerSection = [trimmed caseInsensitiveCompare:@"[Peer]"] == NSOrderedSame;
+            continue;
+        }
+        if (!peerSection) continue;
+        NSRange separator = [trimmed rangeOfString:@"="];
+        if (separator.location == NSNotFound) continue;
+        NSString *key = [[trimmed substringToIndex:separator.location] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if ([key caseInsensitiveCompare:@"Endpoint"] != NSOrderedSame) continue;
+        NSString *endpoint = [[trimmed substringFromIndex:separator.location + 1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if ([endpoint hasPrefix:@"["]) {
+            NSRange closing = [endpoint rangeOfString:@"]"];
+            return closing.location == NSNotFound ? nil : [endpoint substringWithRange:NSMakeRange(1, closing.location - 1)];
+        }
+        NSRange port = [endpoint rangeOfString:@":" options:NSBackwardsSearch];
+        return port.location == NSNotFound ? endpoint : [endpoint substringToIndex:port.location];
+    }
+    return nil;
+}
+
+- (NSNumber *)latencyForConfiguration:(NSString *)configuration {
+    NSString *host = [self endpointHostForConfiguration:configuration];
+    if (host.length == 0) return nil;
+
+    NSTask *task = [[NSTask alloc] init];
+    [task setLaunchPath:@"/sbin/ping"];
+    [task setArguments:[NSArray arrayWithObjects:@"-c", @"1", @"-W", @"1000", @"-t", @"2", host, nil]];
+    NSPipe *pipe = [NSPipe pipe];
+    [task setStandardOutput:pipe];
+    [task setStandardError:pipe];
+    @try {
+        [task launch];
+    } @catch (NSException *exception) {
+        return nil;
+    }
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:2.5];
+    while ([task isRunning] && [deadline timeIntervalSinceNow] > 0) {
+        [NSThread sleepForTimeInterval:0.05];
+    }
+    if ([task isRunning]) [task terminate];
+    [task waitUntilExit];
+    NSString *output = [[NSString alloc] initWithData:[[pipe fileHandleForReading] readDataToEndOfFile]
+                                             encoding:NSUTF8StringEncoding];
+    NSRange marker = [output rangeOfString:@"time="];
+    if (marker.location == NSNotFound) marker = [output rangeOfString:@"time<"];
+    if (marker.location == NSNotFound) return nil;
+    NSString *value = [[output substringFromIndex:marker.location + 5] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    return [NSNumber numberWithDouble:MAX(0.001, [value doubleValue])];
+}
+
+- (void)connectTunnelNamed:(NSString *)name {
+    if (self.operationInFlight) return;
+    NSString *configuration = [self.store configurationForTunnel:name];
+    if (!configuration) return;
+    self.operationInFlight = YES;
+    self.statusView.connecting = YES;
+    [self.statusView setNeedsDisplay:YES];
+    NSString *token = [CWGServiceInstaller token];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        CWGDaemonClient *client = [[CWGDaemonClient alloc] initWithToken:token];
+        CWGTunnelStatus *current = [client status];
+        NSString *error = nil;
+        BOOL ok = YES;
+        if (![current isActive] || ![current.name isEqualToString:name]) {
+            ok = [client bringUpTunnel:name configuration:configuration error:&error];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.operationInFlight = NO;
+            if (!ok) [self alert:[NSString stringWithFormat:@"Tunnel operation failed:\n\n%@", error ?: @"Unknown error"]];
+            [self refreshStatus];
+        });
+    });
+}
+
+- (void)disconnectActiveTunnel {
+    self.operationInFlight = YES;
+    NSString *token = [CWGServiceInstaller token];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        CWGDaemonClient *client = [[CWGDaemonClient alloc] initWithToken:token];
+        NSString *error = nil;
+        BOOL ok = [client bringDownWithError:&error];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.operationInFlight = NO;
+            if (!ok) [self alert:[NSString stringWithFormat:@"Tunnel operation failed:\n\n%@", error ?: @"Unknown error"]];
+            [self refreshStatus];
+        });
+    });
+}
+
+- (void)autoconnect:(id)sender {
+    (void)sender;
+    if (self.operationInFlight || ![self ensureServiceReady]) return;
+    if ([self.currentStatus isActive]) {
+        [self disconnectActiveTunnel];
+        return;
+    }
+    NSArray *names = [self.store tunnelNames];
+    if (names.count == 0) return;
+    if (names.count == 1) {
+        [self connectTunnelNamed:[names objectAtIndex:0]];
+        return;
+    }
+
+    self.operationInFlight = YES;
+    self.statusView.connecting = YES;
+    [self.statusView setNeedsDisplay:YES];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSMutableDictionary *latencies = [NSMutableDictionary dictionary];
+        dispatch_apply(names.count, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(size_t index) {
+            NSString *name = [names objectAtIndex:index];
+            NSString *configuration = [self.store configurationForTunnel:name];
+            NSNumber *latency = [self latencyForConfiguration:configuration];
+            if (latency) {
+                @synchronized (latencies) {
+                    [latencies setObject:latency forKey:name];
+                }
+            }
+        });
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSString *bestName = nil;
+            double bestLatency = DBL_MAX;
+            for (NSString *name in names) {
+                double latency = [[latencies objectForKey:name] doubleValue];
+                if (latency > 0 && latency < bestLatency) {
+                    bestLatency = latency;
+                    bestName = name;
+                }
+            }
+            self.operationInFlight = NO;
+            if (!bestName) {
+                self.statusView.connecting = NO;
+                [self.statusView setNeedsDisplay:YES];
+                [self alert:@"No reachable configs."];
+                return;
+            }
+            [self connectTunnelNamed:bestName];
+        });
+    });
 }
 
 - (BOOL)ensureServiceReady {
@@ -155,6 +414,8 @@
     if (!configuration) return;
     NSString *token = [CWGServiceInstaller token];
     self.operationInFlight = YES;
+    self.statusView.connecting = YES;
+    [self.statusView setNeedsDisplay:YES];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         CWGDaemonClient *client = [[CWGDaemonClient alloc] initWithToken:token];
         CWGTunnelStatus *current = [client status];
@@ -164,6 +425,119 @@
             ok = [client bringDownWithError:&error];
         } else {
             ok = [client bringUpTunnel:name configuration:configuration error:&error];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.operationInFlight = NO;
+            if (!ok) [self alert:[NSString stringWithFormat:@"Tunnel operation failed:\n\n%@", error ?: @"Unknown error"]];
+            [self refreshStatus];
+        });
+    });
+}
+
+
+- (void)updateLoginItem {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *directory = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/LaunchAgents"];
+    NSString *path = [directory stringByAppendingPathComponent:@"com.clolettewg.plist"];
+    NSString *legacyPath = [directory stringByAppendingPathComponent:@"com.narek.clolettewg.plist"];
+    NSFileManager *files = [NSFileManager defaultManager];
+    [files removeItemAtPath:legacyPath error:NULL];
+    if (![defaults boolForKey:@"CloletteWG.AutoLaunchApp"]) {
+        [files removeItemAtPath:path error:NULL];
+        return;
+    }
+    [files createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSDictionary *agent = [NSDictionary dictionaryWithObjectsAndKeys:
+        @"com.clolettewg", @"Label",
+        [NSArray arrayWithObject:@"/Applications/CloletteWG.app/Contents/MacOS/CloletteWG"], @"ProgramArguments",
+        [NSNumber numberWithBool:YES], @"RunAtLoad",
+        @"Aqua", @"LimitLoadToSessionType", nil];
+    [agent writeToFile:path atomically:YES];
+}
+
+- (void)toggleAutoLaunch:(id)sender {
+    (void)sender;
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    BOOL enabled = ![defaults boolForKey:@"CloletteWG.AutoLaunchApp"];
+    [defaults setBool:enabled forKey:@"CloletteWG.AutoLaunchApp"];
+    if (!enabled) {
+        [defaults setBool:NO forKey:@"CloletteWG.AutoConnectTunnel"];
+        [defaults setBool:NO forKey:@"CloletteWG.BossModeAtLogin"];
+    }
+    [self updateLoginItem];
+    [self rebuildMenuWithStatus:self.currentStatus];
+}
+
+- (void)toggleAutoTunnel:(id)sender {
+    (void)sender;
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if (![defaults boolForKey:@"CloletteWG.AutoLaunchApp"]) return;
+    BOOL enabled = ![defaults boolForKey:@"CloletteWG.AutoConnectTunnel"];
+    [defaults setBool:enabled forKey:@"CloletteWG.AutoConnectTunnel"];
+    [self rebuildMenuWithStatus:self.currentStatus];
+}
+
+- (void)toggleBossModeAtLogin:(id)sender {
+    (void)sender;
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if (![defaults boolForKey:@"CloletteWG.AutoLaunchApp"]) return;
+    BOOL enabled = ![defaults boolForKey:@"CloletteWG.BossModeAtLogin"];
+    [defaults setBool:enabled forKey:@"CloletteWG.BossModeAtLogin"];
+    [self rebuildMenuWithStatus:self.currentStatus];
+}
+
+- (void)applyBossModeAtLoginIfNeeded {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults boolForKey:@"CloletteWG.AutoLaunchApp"] &&
+        [defaults boolForKey:@"CloletteWG.BossModeAtLogin"]) {
+        [self bossMode:nil];
+    }
+}
+
+- (void)autoConnectIfNeeded {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if (![defaults boolForKey:@"CloletteWG.AutoLaunchApp"] ||
+        ![defaults boolForKey:@"CloletteWG.AutoConnectTunnel"] ||
+        [self.store tunnelNames].count == 0) return;
+    if (!self.currentStatus) {
+        [self performSelector:@selector(autoConnectIfNeeded) withObject:nil afterDelay:1.0];
+        return;
+    }
+    if ([self.currentStatus isActive] || [CWGServiceInstaller serviceState] != CWGServiceStateReady) return;
+    [self toggleLastTunnel];
+}
+
+- (void)toggleLastTunnel {
+    NSArray *names = [self.store tunnelNames];
+    if (names.count == 0) {
+        [self alert:@"Error: no imported configs."];
+        return;
+    }
+    if (self.operationInFlight || ![self ensureServiceReady]) return;
+
+    NSString *lastName = self.lastConnectedTunnelName;
+    if (!lastName) lastName = [[NSUserDefaults standardUserDefaults] stringForKey:@"CloletteWG.LastConnectedTunnel"];
+    NSString *configuration = [self.store configurationForTunnel:lastName];
+    if (!configuration) {
+        lastName = [names objectAtIndex:0];
+        configuration = [self.store configurationForTunnel:lastName];
+    }
+    if (!configuration) return;
+
+    self.lastConnectedTunnelName = lastName;
+    NSString *token = [CWGServiceInstaller token];
+    self.operationInFlight = YES;
+    self.statusView.connecting = YES;
+    [self.statusView setNeedsDisplay:YES];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        CWGDaemonClient *client = [[CWGDaemonClient alloc] initWithToken:token];
+        CWGTunnelStatus *current = [client status];
+        NSString *error = nil;
+        BOOL ok;
+        if ([current isActive]) {
+            ok = [client bringDownWithError:&error];
+        } else {
+            ok = [client bringUpTunnel:lastName configuration:configuration error:&error];
         }
         dispatch_async(dispatch_get_main_queue(), ^{
             self.operationInFlight = NO;
@@ -259,29 +633,200 @@
     return text;
 }
 
+- (NSString *)allowedIPsFromConfiguration:(NSString *)configuration {
+    BOOL peerSection = NO;
+    for (NSString *line in [configuration componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if ([trimmed hasPrefix:@"["]) {
+            peerSection = [trimmed caseInsensitiveCompare:@"[Peer]"] == NSOrderedSame;
+            continue;
+        }
+        if (!peerSection) continue;
+        NSRange separator = [trimmed rangeOfString:@"="];
+        if (separator.location == NSNotFound) continue;
+        NSString *key = [[trimmed substringToIndex:separator.location] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if ([key caseInsensitiveCompare:@"AllowedIPs"] == NSOrderedSame) {
+            return [[trimmed substringFromIndex:separator.location + 1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        }
+    }
+    return nil;
+}
+
+- (BOOL)isFullTunnelAllowedIPs:(NSString *)allowedIPs {
+    for (NSString *item in [allowedIPs componentsSeparatedByString:@","]) {
+        if ([[item stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] isEqualToString:@"0.0.0.0/0"]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (NSString *)configuration:(NSString *)configuration withAllowedIPs:(NSString *)allowedIPs {
+    NSMutableArray *result = [NSMutableArray array];
+    BOOL peerSection = NO;
+    BOOL replaced = NO;
+    for (NSString *line in [configuration componentsSeparatedByString:@"\n"]) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if ([trimmed hasPrefix:@"["]) {
+            if (peerSection && !replaced && allowedIPs != nil) {
+                [result addObject:[NSString stringWithFormat:@"AllowedIPs = %@", allowedIPs]];
+                replaced = YES;
+            }
+            peerSection = [trimmed caseInsensitiveCompare:@"[Peer]"] == NSOrderedSame;
+        }
+        NSRange separator = [trimmed rangeOfString:@"="];
+        if (peerSection && !replaced && separator.location != NSNotFound) {
+            NSString *key = [[trimmed substringToIndex:separator.location] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            if ([key caseInsensitiveCompare:@"AllowedIPs"] == NSOrderedSame) {
+                replaced = YES;
+                if (allowedIPs != nil) {
+                    [result addObject:[NSString stringWithFormat:@"AllowedIPs = %@", allowedIPs]];
+                }
+                continue;
+            }
+        }
+        [result addObject:line];
+    }
+    if (!replaced && allowedIPs != nil) {
+        [result addObject:[NSString stringWithFormat:@"AllowedIPs = %@", allowedIPs]];
+    }
+    return [result componentsJoinedByString:@"\n"];
+}
+
+- (void)toggleKillSwitch:(NSButton *)sender {
+    NSString *configuration = self.killSwitchEditor.string;
+    NSString *allowedIPs = sender.state == NSOnState
+                           ? @"0.0.0.0/0, ::/0"
+                           : @"0.0.0.0/1, 128.0.0.0/1, ::/1, 8000::/1";
+    [self.killSwitchEditor setString:[self configuration:configuration withAllowedIPs:allowedIPs]];
+}
+
 - (void)editTunnel:(NSMenuItem *)sender {
     NSString *name = [sender representedObject];
     NSString *configuration = [self.store configurationForTunnel:name];
     if (!configuration) return;
     NSAlert *dialog = [[NSAlert alloc] init];
     [dialog setMessageText:[NSString stringWithFormat:@"Edit %@", name]];
-    [dialog setInformativeText:@"Restart the tunnel after saving to apply changes."];
     NSTextView *editor = [self textViewInScrollViewForDialog:dialog height:340.0];
     [editor setString:configuration];
-    [dialog addButtonWithTitle:@"Save"];
-    [dialog addButtonWithTitle:@"Cancel"];
+
+    NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 520, 380)];
+    NSScrollView *scroll = [editor enclosingScrollView];
+    [scroll setFrame:NSMakeRect(0, 40, 520, 340)];
+    [container addSubview:scroll];
+    NSButton *killSwitch = [[NSButton alloc] initWithFrame:NSMakeRect(0, 8, 280, 24)];
+    [killSwitch setButtonType:NSSwitchButton];
+    [killSwitch setTitle:@"Kill switch (full tunnel)"];
+    [killSwitch setState:[self isFullTunnelAllowedIPs:[self allowedIPsFromConfiguration:configuration]] ? NSOnState : NSOffState];
+    [killSwitch setTarget:self];
+    [killSwitch setAction:@selector(toggleKillSwitch:)];
+    [container addSubview:killSwitch];
+    [dialog setAccessoryView:container];
+
+    self.killSwitchEditor = editor;
+    self.killSwitchTunnelName = name;
+    [dialog addButtonWithTitle:@"OK"];
     [NSApp activateIgnoringOtherApps:YES];
-    if ([dialog runModal] != NSAlertFirstButtonReturn) return;
-    if (![self validConfiguration:[editor string]]) {
+    NSInteger response = [dialog runModal];
+    self.killSwitchEditor = nil;
+    self.killSwitchTunnelName = nil;
+    if (response != NSAlertFirstButtonReturn) return;
+
+    NSString *updatedConfiguration = [editor string];
+    if ([updatedConfiguration isEqualToString:configuration]) {
+        [self alert:@"No changes to save."];
+        return;
+    }
+    if (![self validConfiguration:updatedConfiguration]) {
         [self alert:@"The edited configuration must retain [Interface] and [Peer] sections."];
         return;
     }
     NSError *error = nil;
-    if ([self.store saveConfiguration:[editor string] name:name error:&error]) {
-        [self alert:[NSString stringWithFormat:@"Saved %@. Restart the tunnel to apply changes.", name]];
-    } else {
+    if (![self.store saveConfiguration:updatedConfiguration name:name error:&error]) {
         [self alert:[NSString stringWithFormat:@"Save failed:\n\n%@", [error localizedDescription]]];
+        return;
     }
+
+    self.operationInFlight = YES;
+    NSString *token = [CWGServiceInstaller token];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        CWGDaemonClient *client = [[CWGDaemonClient alloc] initWithToken:token];
+        CWGTunnelStatus *status = [client status];
+        BOOL shouldRestart = [status isActive] && [status.name isEqualToString:name];
+        BOOL restarted = NO;
+        NSString *operationError = nil;
+        if (shouldRestart && [client bringDownWithError:&operationError]) {
+            restarted = [client bringUpTunnel:name configuration:updatedConfiguration error:&operationError];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.operationInFlight = NO;
+            if (operationError) {
+                [self alert:[NSString stringWithFormat:@"Changes saved, but tunnel restart failed:\n\n%@", operationError]];
+            } else if (restarted) {
+                [self alert:@"Changes saved. Tunnel restarted."];
+            } else {
+                [self alert:@"Changes saved."];
+            }
+            [self refreshStatus];
+        });
+    });
+}
+
+- (void)renameTunnel:(NSMenuItem *)sender {
+    NSString *oldName = [sender representedObject];
+    if (!oldName) return;
+    NSAlert *dialog = [[NSAlert alloc] init];
+    [dialog setMessageText:[NSString stringWithFormat:@"Rename %@", oldName]];
+    NSTextField *input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 280, 24)];
+    [input setStringValue:oldName];
+    [dialog setAccessoryView:input];
+    [dialog addButtonWithTitle:@"OK"];
+    [dialog addButtonWithTitle:@"Cancel"];
+    [NSApp activateIgnoringOtherApps:YES];
+    [[dialog window] makeFirstResponder:input];
+    if ([dialog runModal] != NSAlertFirstButtonReturn) return;
+
+    NSString *newName = CWGValidatedTunnelName([input stringValue]);
+    if (!newName) {
+        [self alert:@"Import error: the config contains special characters or is not an AmneziaWG/WireGuard config. Rename the config or try again."];
+        return;
+    }
+    if ([newName isEqualToString:oldName]) {
+        [self alert:@"Name unchanged."];
+        return;
+    }
+
+    NSError *error = nil;
+    if (![self.store renameTunnel:oldName toName:newName error:&error]) {
+        [self alert:[error localizedDescription]];
+        return;
+    }
+    [self refreshStatus];
+
+    self.operationInFlight = YES;
+    NSString *token = [CWGServiceInstaller token];
+    NSString *configuration = [self.store configurationForTunnel:newName];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        CWGDaemonClient *client = [[CWGDaemonClient alloc] initWithToken:token];
+        CWGTunnelStatus *status = [client status];
+        BOOL shouldRestart = [status isActive] && [status.name isEqualToString:oldName];
+        BOOL restarted = NO;
+        NSString *operationError = nil;
+        if (shouldRestart && [client bringDownWithError:&operationError]) {
+            restarted = [client bringUpTunnel:newName configuration:configuration error:&operationError];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.operationInFlight = NO;
+            if (operationError) {
+                [self alert:[NSString stringWithFormat:@"Renamed to %@, but tunnel restart failed:\n\n%@", newName, operationError]];
+            } else if (restarted) {
+                [self alert:[NSString stringWithFormat:@"Renamed to %@. Tunnel restarted.", newName]];
+            } else {
+                [self alert:[NSString stringWithFormat:@"Renamed to %@.", newName]];
+            }
+            [self refreshStatus];
+        });
+    });
 }
 
 - (void)deleteTunnel:(NSMenuItem *)sender {
@@ -352,9 +897,11 @@ static NSString *CWGFormatBytes(long long value) {
     return label;
 }
 
-- (void)addStatusRowToView:(NSView *)view title:(NSString *)title value:(NSString *)value y:(CGFloat)y {
+- (NSTextField *)addStatusRowToView:(NSView *)view title:(NSString *)title value:(NSString *)value y:(CGFloat)y {
     [view addSubview:[self statusLabel:title frame:NSMakeRect(20, y, 125, 20) bold:NO]];
-    [view addSubview:[self statusLabel:value.length > 0 ? value : @"—" frame:NSMakeRect(150, y, 290, 20) bold:YES]];
+    NSTextField *valueLabel = [self statusLabel:value.length > 0 ? value : @"—" frame:NSMakeRect(150, y, 290, 20) bold:YES];
+    [view addSubview:valueLabel];
+    return valueLabel;
 }
 
 - (NSButton *)windowButton:(NSString *)title frame:(NSRect)frame action:(SEL)action {
@@ -366,48 +913,152 @@ static NSString *CWGFormatBytes(long long value) {
     return button;
 }
 
+- (NSString *)localAddressForStatus:(CWGTunnelStatus *)status {
+    NSString *configuration = [self.store configurationForTunnel:status.name];
+    BOOL interfaceSection = NO;
+    for (NSString *line in [configuration componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if ([trimmed hasPrefix:@"["]) {
+            interfaceSection = [trimmed caseInsensitiveCompare:@"[Interface]"] == NSOrderedSame;
+            continue;
+        }
+        if (!interfaceSection) continue;
+        NSRange separator = [trimmed rangeOfString:@"="];
+        if (separator.location == NSNotFound) continue;
+        NSString *key = [[trimmed substringToIndex:separator.location] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if ([key caseInsensitiveCompare:@"Address"] == NSOrderedSame) {
+            return [[trimmed substringFromIndex:separator.location + 1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        }
+    }
+    return @"—";
+}
+
+- (NSImage *)statusDotImageForState:(NSString *)state {
+    NSColor *color = [NSColor grayColor];
+    if ([state isEqualToString:@"connected"]) {
+        color = [NSColor colorWithCalibratedRed:0.12 green:0.65 blue:0.20 alpha:1.0];
+    } else if ([state isEqualToString:@"connecting"]) {
+        color = [NSColor orangeColor];
+    }
+    NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(14, 14)];
+    [image lockFocus];
+    [color setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(0, 0, 14, 14)] fill];
+    [image unlockFocus];
+    return image;
+}
+
+- (void)updateStatusWindowWithStatus:(CWGTunnelStatus *)status {
+    if (!self.statusWindow || !self.statusValueLabels) return;
+    [self.statusStateLabel setStringValue:[status readableState]];
+    [self.statusDotView setImage:[self statusDotImageForState:status.state]];
+
+    NSString *handshake = @"Never";
+    if (status.lastHandshake > 0) {
+        long long seconds = (long long)([[NSDate date] timeIntervalSince1970] - (NSTimeInterval)status.lastHandshake);
+        if (seconds < 0) seconds = 0;
+        handshake = [NSString stringWithFormat:@"%lld sec ago", seconds];
+    }
+    NSDictionary *values = [NSDictionary dictionaryWithObjectsAndKeys:
+        status.name.length > 0 ? status.name : @"—", @"tunnel",
+        [self localAddressForStatus:status], @"localIP",
+        status.endpoint.length > 0 ? status.endpoint : @"—", @"endpoint",
+        status.listenPort > 0 ? [NSString stringWithFormat:@"%d", status.listenPort] : @"—", @"listenPort",
+        handshake, @"handshake",
+        CWGFormatBytes(status.receivedBytes), @"received",
+        CWGFormatBytes(status.transmittedBytes), @"transmitted",
+        self.countryValue ?: @"—", @"country",
+        self.ispValue ?: @"—", @"isp", nil];
+    for (NSString *key in values) {
+        [[self.statusValueLabels objectForKey:key] setStringValue:[values objectForKey:key]];
+    }
+}
+
+- (NSDictionary *)networkInformation {
+    @try {
+        __block NSTask *task = nil;
+        __block NSPipe *pipe = nil;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            task = [[NSTask alloc] init];
+            [task setLaunchPath:@"/usr/bin/curl"];
+            [task setArguments:[NSArray arrayWithObjects:@"-fsSL", @"--max-time", @"5", @"ipinfo.io", nil]];
+            pipe = [NSPipe pipe];
+            [task setStandardOutput:pipe];
+            [task setStandardError:pipe];
+            [task launch];
+        });
+        [task waitUntilExit];
+        NSData *data = [[pipe fileHandleForReading] readDataToEndOfFile];
+        id JSON = data.length > 0 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+        if (![JSON isKindOfClass:[NSDictionary class]]) return nil;
+
+        NSString *code = [[JSON objectForKey:@"country"] isKindOfClass:[NSString class]] ? [[JSON objectForKey:@"country"] uppercaseString] : nil;
+        NSString *country = code.length == 2 ? [[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"] displayNameForKey:NSLocaleCountryCode value:code] : nil;
+        NSString *isp = [[JSON objectForKey:@"org"] isKindOfClass:[NSString class]] ? [JSON objectForKey:@"org"] : nil;
+        if (!isp && [[JSON objectForKey:@"isp"] isKindOfClass:[NSString class]]) isp = [JSON objectForKey:@"isp"];
+        if ([isp hasPrefix:@"AS"]) {
+            NSRange space = [isp rangeOfString:@" "];
+            if (space.location != NSNotFound) isp = [isp substringFromIndex:space.location + 1];
+        }
+        return [NSDictionary dictionaryWithObjectsAndKeys:
+            country.length > 0 ? country : @"Unknown", @"country",
+            isp.length > 0 ? isp : @"Unknown", @"isp", nil];
+    } @catch (NSException *exception) {
+        return nil;
+    }
+}
+
+- (void)updateNetworkInfoForStatus:(CWGTunnelStatus *)status {
+    NSString *key = [NSString stringWithFormat:@"%@:%@", status.state ?: @"", status.name ?: @""];
+    if ([self.networkInfoKey isEqualToString:key]) return;
+    self.networkInfoKey = key;
+    if ([status.state isEqualToString:@"connecting"]) {
+        self.countryValue = @"Looking up…";
+        self.ispValue = @"Looking up…";
+        [self updateStatusWindowWithStatus:status];
+        return;
+    }
+    [self updateStatusWindowWithStatus:status];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSDictionary *information = [self networkInformation];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (![self.networkInfoKey isEqualToString:key]) return;
+            self.countryValue = [information objectForKey:@"country"] ?: @"Unknown";
+            self.ispValue = [information objectForKey:@"isp"] ?: @"Unknown";
+            [self updateStatusWindowWithStatus:status];
+        });
+    });
+}
+
 - (void)presentStatusWindowWithStatus:(CWGTunnelStatus *)status {
     [self.statusWindow close];
-    self.statusWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 460, 360)
+    self.statusWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 460, 456)
                                                    styleMask:NSTitledWindowMask | NSClosableWindowMask
                                                      backing:NSBackingStoreBuffered defer:NO];
     [self.statusWindow setTitle:@"CloletteWG Status"];
     [self.statusWindow setReleasedWhenClosed:NO];
+    self.statusValueLabels = [NSMutableDictionary dictionary];
     NSView *content = [self.statusWindow contentView];
 
-    NSColor *dotColor = [NSColor grayColor];
-    if ([status.state isEqualToString:@"connected"]) {
-        dotColor = [NSColor colorWithCalibratedRed:0.12 green:0.65 blue:0.20 alpha:1.0];
-    } else if ([status.state isEqualToString:@"connecting"]) {
-        dotColor = [NSColor orangeColor];
-    }
-    NSImage *dotImage = [[NSImage alloc] initWithSize:NSMakeSize(14, 14)];
-    [dotImage lockFocus];
-    [dotColor setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(0, 0, 14, 14)] fill];
-    [dotImage unlockFocus];
-    NSImageView *dot = [[NSImageView alloc] initWithFrame:NSMakeRect(21, 318, 14, 14)];
-    [dot setImage:dotImage];
-    [content addSubview:dot];
-    NSTextField *state = [self statusLabel:[status readableState] frame:NSMakeRect(46, 310, 394, 24) bold:YES];
-    [state setFont:[NSFont boldSystemFontOfSize:14.0]];
-    [content addSubview:state];
+    self.statusDotView = [[NSImageView alloc] initWithFrame:NSMakeRect(21, 414, 14, 14)];
+    [content addSubview:self.statusDotView];
+    self.statusStateLabel = [self statusLabel:@"" frame:NSMakeRect(46, 406, 394, 24) bold:YES];
+    [self.statusStateLabel setFont:[NSFont boldSystemFontOfSize:14.0]];
+    [content addSubview:self.statusStateLabel];
 
-    NSString *handshake = @"Never";
-    if (status.lastHandshake > 0) {
-        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-        [formatter setDateFormat:@"yyyy-MM-dd HH:mm:ss"];
-        handshake = [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)status.lastHandshake]];
-    }
-    [self addStatusRowToView:content title:@"Tunnel" value:status.name y:262];
-    [self addStatusRowToView:content title:@"Endpoint" value:status.endpoint y:230];
-    [self addStatusRowToView:content title:@"Listen port" value:status.listenPort > 0 ? [NSString stringWithFormat:@"%d", status.listenPort] : @"—" y:198];
-    [self addStatusRowToView:content title:@"Last handshake" value:handshake y:166];
-    [self addStatusRowToView:content title:@"Received" value:CWGFormatBytes(status.receivedBytes) y:134];
-    [self addStatusRowToView:content title:@"Transmitted" value:CWGFormatBytes(status.transmittedBytes) y:102];
-    [self addStatusRowToView:content title:@"AWG obfuscation" value:status.obfuscationEnabled ? @"Enabled" : @"Disabled / default" y:70];
-    [content addSubview:[self windowButton:@"Daemon Log…" frame:NSMakeRect(20, 20, 120, 28) action:@selector(showDaemonLog:)]];
-    [content addSubview:[self windowButton:@"Close" frame:NSMakeRect(360, 20, 80, 28) action:@selector(closeStatusWindow:)]];
+    [self.statusValueLabels setObject:[self addStatusRowToView:content title:@"Tunnel" value:@"" y:358] forKey:@"tunnel"];
+    [self.statusValueLabels setObject:[self addStatusRowToView:content title:@"Local IP" value:@"" y:326] forKey:@"localIP"];
+    [self.statusValueLabels setObject:[self addStatusRowToView:content title:@"Endpoint" value:@"" y:294] forKey:@"endpoint"];
+    [self.statusValueLabels setObject:[self addStatusRowToView:content title:@"Listen port" value:@"" y:262] forKey:@"listenPort"];
+    [self.statusValueLabels setObject:[self addStatusRowToView:content title:@"Last handshake" value:@"" y:230] forKey:@"handshake"];
+    [self.statusValueLabels setObject:[self addStatusRowToView:content title:@"Received" value:@"" y:198] forKey:@"received"];
+    [self.statusValueLabels setObject:[self addStatusRowToView:content title:@"Transmitted" value:@"" y:166] forKey:@"transmitted"];
+    [self.statusValueLabels setObject:[self addStatusRowToView:content title:@"Country" value:@"" y:134] forKey:@"country"];
+    [self.statusValueLabels setObject:[self addStatusRowToView:content title:@"ISP" value:@"" y:102] forKey:@"isp"];
+    [content addSubview:[self windowButton:@"Daemon Log…" frame:NSMakeRect(20, 32, 120, 28) action:@selector(showDaemonLog:)]];
+    [content addSubview:[self windowButton:@"Close" frame:NSMakeRect(360, 32, 80, 28) action:@selector(closeStatusWindow:)]];
+    [self updateStatusWindowWithStatus:status];
+    [self updateNetworkInfoForStatus:status];
     [self.statusWindow center];
     [NSApp activateIgnoringOtherApps:YES];
     [self.statusWindow makeKeyAndOrderFront:self];
@@ -619,6 +1270,23 @@ static NSString *CWGFormatBytes(long long value) {
 
 - (void)quitApplication:(id)sender {
     (void)sender;
+    if (![self.currentStatus isActive]) {
+        [NSApp terminate:nil];
+        return;
+    }
+
+    NSAlert *confirm = [[NSAlert alloc] init];
+    [confirm setMessageText:@"Are you sure you want to quit? The tunnel will be disconnected!"];
+    [confirm addButtonWithTitle:@"Yes"];
+    [confirm addButtonWithTitle:@"No"];
+    [NSApp activateIgnoringOtherApps:YES];
+    if ([confirm runModal] != NSAlertFirstButtonReturn) return;
+
+    NSString *error = nil;
+    if (![[self daemonClient] bringDownWithError:&error]) {
+        [self alert:[NSString stringWithFormat:@"Could not disconnect the tunnel:\n\n%@", error ?: @"Unknown error"]];
+        return;
+    }
     [NSApp terminate:nil];
 }
 

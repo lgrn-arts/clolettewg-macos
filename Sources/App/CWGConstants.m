@@ -1,9 +1,9 @@
 #import "CWGConstants.h"
 
 NSString * const CWGAppBundlePath = @"/Applications/CloletteWG.app";
-NSString * const CWGServiceLabel = @"com.narek.clolettewg.daemon";
-NSString * const CWGHelperPath = @"/Library/PrivilegedHelperTools/com.narek.clolettewg.daemon";
-NSString * const CWGLaunchdPlistPath = @"/Library/LaunchDaemons/com.narek.clolettewg.daemon.plist";
+NSString * const CWGServiceLabel = @"com.clolettewg.daemon";
+NSString * const CWGHelperPath = @"/Library/PrivilegedHelperTools/com.clolettewg.daemon";
+NSString * const CWGLaunchdPlistPath = @"/Library/LaunchDaemons/com.clolettewg.daemon.plist";
 NSString * const CWGStateDirectory = @"/Library/Application Support/CloletteWG";
 NSString * const CWGTokenPath = @"/Library/Application Support/CloletteWG/token";
 NSString * const CWGVersionStampPath = @"/Library/Application Support/CloletteWG/VERSION";

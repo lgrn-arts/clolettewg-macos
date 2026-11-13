@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>CloletteWG</string>
-  <key>CFBundleIdentifier</key><string>com.narek.clolettewg</string>
+  <key>CFBundleIdentifier</key><string>com.clolettewg</string>
   <key>CFBundleName</key><string>CloletteWG</string>
   <key>CFBundleDisplayName</key><string>CloletteWG</string>
-  <key>CFBundleVersion</key><string>0.20obj</string>
-  <key>CFBundleShortVersionString</key><string>0.20obj</string>
+  <key>CFBundleVersion</key><string>0.30</string>
+  <key>CFBundleShortVersionString</key><string>0.30</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSUIElement</key><true/>

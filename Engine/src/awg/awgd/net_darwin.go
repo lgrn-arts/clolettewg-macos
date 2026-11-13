@@ -71,6 +71,14 @@ func currentDefaultGateway() (string, string) {
 	return gw, iface
 }
 
+func routeFamilyForCIDR(cidr string) string {
+	ip, _, err := net.ParseCIDR(cidr)
+	if err == nil && ip.To4() == nil {
+		return "-inet6"
+	}
+	return "-inet"
+}
+
 // hostIPForEndpoint resolves the endpoint host to an IP string.
 func hostIPForEndpoint(endpoint string) string {
 	host, _, err := net.SplitHostPort(endpoint)
@@ -186,10 +194,11 @@ func (n *netConfigurator) bringUp(conf *Conf) error {
 			specs = append(specs, ipnet.String())
 		}
 		for _, spec := range specs {
-			out, err := runCmd(routeBin, "-n", "add", "-inet", spec, "-interface", n.iface)
+			family := routeFamilyForCIDR(spec)
+			out, err := runCmd(routeBin, "-n", "add", family, spec, "-interface", n.iface)
 			if err != nil {
 				if strings.Contains(out, "File exists") {
-					out2, err2 := runCmd(routeBin, "-n", "change", "-inet", spec, "-interface", n.iface)
+					out2, err2 := runCmd(routeBin, "-n", "change", family, spec, "-interface", n.iface)
 					if err2 != nil {
 						return fmt.Errorf("route change %s: %v: %s", spec, err2, strings.TrimSpace(out2))
 					}
@@ -197,7 +206,7 @@ func (n *netConfigurator) bringUp(conf *Conf) error {
 					return fmt.Errorf("route add %s: %v: %s", spec, err, strings.TrimSpace(out))
 				}
 			}
-			n.addedRoutes = append(n.addedRoutes, "-inet "+spec)
+			n.addedRoutes = append(n.addedRoutes, family+" "+spec)
 			n.nlog("added %s -> %s", spec, n.iface)
 		}
 	}

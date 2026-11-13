@@ -85,6 +85,38 @@
     return YES;
 }
 
+- (BOOL)renameTunnel:(NSString *)oldName toName:(NSString *)newName error:(NSError **)error {
+    NSString *validName = CWGValidatedTunnelName(newName);
+    if (!validName || ![self.tunnels objectForKey:oldName]) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"CloletteWG.TunnelStore" code:2
+                                     userInfo:[NSDictionary dictionaryWithObject:@"Invalid old or new tunnel name."
+                                                                          forKey:NSLocalizedDescriptionKey]];
+        }
+        return NO;
+    }
+    if ([oldName isEqualToString:validName]) return YES;
+    if ([self.tunnels objectForKey:validName]) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"CloletteWG.TunnelStore" code:3
+                                     userInfo:[NSDictionary dictionaryWithObject:@"A tunnel with this name already exists."
+                                                                          forKey:NSLocalizedDescriptionKey]];
+        }
+        return NO;
+    }
+    @synchronized (self) {
+        NSString *configuration = [self.tunnels objectForKey:oldName];
+        [self.tunnels removeObjectForKey:oldName];
+        [self.tunnels setObject:configuration forKey:validName];
+        if (![self writeTunnels:error]) {
+            [self.tunnels removeObjectForKey:validName];
+            [self.tunnels setObject:configuration forKey:oldName];
+            return NO;
+        }
+    }
+    return YES;
+}
+
 - (BOOL)removeTunnel:(NSString *)name error:(NSError **)error {
     @synchronized (self) {
         NSString *previous = [self.tunnels objectForKey:name];

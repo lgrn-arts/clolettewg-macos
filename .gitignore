@@ -3,6 +3,7 @@ build/
 *.dmg
 *.app
 .DS_Store
+._*
 __pycache__/
 *.pyc
 Binaries/*.sha256

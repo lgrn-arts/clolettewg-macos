@@ -14,7 +14,7 @@
     NSBundle *bundle = [NSBundle mainBundle];
     if ([bundle pathForResource:@"clolettewgd" ofType:nil] == nil ||
         [bundle pathForResource:@"clolettewgd-modern" ofType:nil] == nil ||
-        [bundle pathForResource:@"com.narek.clolettewg.daemon" ofType:@"plist"] == nil ||
+        [bundle pathForResource:@"com.clolettewg.daemon" ofType:@"plist"] == nil ||
         [bundle pathForResource:@"install-service" ofType:@"sh"] == nil) {
         return CWGServiceStateIncompleteBundle;
     }

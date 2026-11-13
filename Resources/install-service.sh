@@ -7,9 +7,9 @@ APP_VERSION="${3:-}"
 SERVICE_LABEL="${4:-}"
 EXPECTED_RESOURCES="/Applications/CloletteWG.app/Contents/Resources"
 DAEMON_SOURCE="$RESOURCES/clolettewgd"
-PLIST_SOURCE="$RESOURCES/com.narek.clolettewg.daemon.plist"
-DAEMON_DEST="/Library/PrivilegedHelperTools/com.narek.clolettewg.daemon"
-PLIST_DEST="/Library/LaunchDaemons/com.narek.clolettewg.daemon.plist"
+PLIST_SOURCE="$RESOURCES/com.clolettewg.daemon.plist"
+DAEMON_DEST="/Library/PrivilegedHelperTools/com.clolettewg.daemon"
+PLIST_DEST="/Library/LaunchDaemons/com.clolettewg.daemon.plist"
 STATE_DIR="/Library/Application Support/CloletteWG"
 LAUNCHD_LOG="$STATE_DIR/launchd.log"
 SOCKET="/var/run/clolette-wg.sock"
@@ -21,7 +21,7 @@ fail() {
 
 [ "$(id -u)" = "0" ] || fail "installer must run as root"
 [ "$RESOURCES" = "$EXPECTED_RESOURCES" ] || fail "install CloletteWG at /Applications/CloletteWG.app first"
-[ "$SERVICE_LABEL" = "com.narek.clolettewg.daemon" ] || fail "unexpected service label"
+[ "$SERVICE_LABEL" = "com.clolettewg.daemon" ] || fail "unexpected service label"
 case "$APP_VERSION" in
     ''|*[!A-Za-z0-9._-]*) fail "invalid app version" ;;
 esac
@@ -67,6 +67,12 @@ if ! VERSION_OUTPUT="$("$DAEMON_DEST" -version 2>&1)"; then
     fail "installed daemon cannot start on macOS $MACOS_VERSION: $VERSION_OUTPUT"
 fi
 
+LEGACY_PLIST="/Library/LaunchDaemons/com.narek.clolettewg.daemon.plist"
+LEGACY_DAEMON="/Library/PrivilegedHelperTools/com.narek.clolettewg.daemon"
+if [ -f "$LEGACY_PLIST" ]; then
+    /bin/launchctl unload "$LEGACY_PLIST" 2>/dev/null || true
+fi
+/bin/rm -f "$LEGACY_PLIST" "$LEGACY_DAEMON"
 if [ -f "$PLIST_DEST" ]; then
     /bin/launchctl unload "$PLIST_DEST" 2>/dev/null || true
 fi

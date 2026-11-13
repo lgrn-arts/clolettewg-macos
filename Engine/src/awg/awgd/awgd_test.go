@@ -345,3 +345,18 @@ func TestParseConfigBoolOnOff(t *testing.T) {
 		t.Error("invalid boolean accepted")
 	}
 }
+
+func TestRouteFamilyForCIDR(t *testing.T) {
+	cases := map[string]string{
+		"0.0.0.0/1":   "-inet",
+		"128.0.0.0/1": "-inet",
+		"::/1":        "-inet6",
+		"8000::/1":    "-inet6",
+		"invalid":     "-inet",
+	}
+	for cidr, want := range cases {
+		if got := routeFamilyForCIDR(cidr); got != want {
+			t.Errorf("routeFamilyForCIDR(%q) = %q, want %q", cidr, got, want)
+		}
+	}
+}

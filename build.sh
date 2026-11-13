@@ -26,6 +26,7 @@ SOURCES=(
     "$ROOT/Sources/App/CWGConstants.m"
     "$ROOT/Sources/App/CWGDaemonClient.m"
     "$ROOT/Sources/App/CWGServiceInstaller.m"
+    "$ROOT/Sources/App/CWGStatusItemView.m"
     "$ROOT/Sources/App/CWGTunnelStore.m"
     "$ROOT/Sources/App/CWGVPNURLParser.m"
 )
@@ -37,7 +38,7 @@ MACOSX_DEPLOYMENT_TARGET="$MIN_OS" "$CLANG" \
     -o "$APP/Contents/MacOS/CloletteWG"
 
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
-cp "$ROOT/Resources/com.narek.clolettewg.daemon.plist" "$APP/Contents/Resources/"
+cp "$ROOT/Resources/com.clolettewg.daemon.plist" "$APP/Contents/Resources/"
 cp "$ROOT/Resources/install-service.sh" "$APP/Contents/Resources/"
 cp "$ROOT/Binaries/clolettewgd" "$ROOT/Binaries/clolettewgd-modern" "$APP/Contents/Resources/"
 cp "$ROOT/Assets/AppIcon.icns" "$APP/Contents/Resources/"
@@ -48,7 +49,7 @@ cp "$ROOT/Engine/COPYING" "$APP/Contents/Resources/Engine-COPYING.txt"
 chmod 755 "$APP/Contents/MacOS/CloletteWG" "$APP/Contents/Resources/clolettewgd" \
     "$APP/Contents/Resources/clolettewgd-modern" "$APP/Contents/Resources/install-service.sh"
 
-/usr/bin/plutil -lint "$APP/Contents/Info.plist" "$APP/Contents/Resources/com.narek.clolettewg.daemon.plist" >/dev/null
+/usr/bin/plutil -lint "$APP/Contents/Info.plist" "$APP/Contents/Resources/com.clolettewg.daemon.plist" >/dev/null
 /bin/bash "$ROOT/Scripts/verify-binaries.sh" "$APP"
 
 if command -v codesign >/dev/null 2>&1; then
